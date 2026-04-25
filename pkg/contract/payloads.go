@@ -1238,13 +1238,16 @@ func (m *S2CEnemyDuelKickMessage) Unmarshal(payload []byte) error {
 }
 
 type EnemyDuelPlayerStatus struct {
-	PlayerID   string
-	NickName   string
-	AvatarType string
-	AvatarID   string
-	State      uint8
-	ConnLeave  uint8
-	JoinTs     uint64
+	PlayerID        string
+	NickName        string
+	AvatarType      string
+	AvatarID        string
+	Secretary       string
+	SecretarySkinID string
+	SecretarySkinSp uint8
+	State           uint8
+	ConnLeave       uint8
+	JoinTs          uint64
 }
 
 func (t *EnemyDuelPlayerStatus) MarshalBinary() ([]byte, error) {
@@ -1267,6 +1270,21 @@ func (t *EnemyDuelPlayerStatus) MarshalBinary() ([]byte, error) {
 	}
 
 	err = writePrefixedString(&buf, t.AvatarID)
+	if err != nil {
+		return nil, err
+	}
+
+	err = writePrefixedString(&buf, t.Secretary)
+	if err != nil {
+		return nil, err
+	}
+
+	err = writePrefixedString(&buf, t.SecretarySkinID)
+	if err != nil {
+		return nil, err
+	}
+
+	err = binary.Write(&buf, binary.BigEndian, t.SecretarySkinSp)
 	if err != nil {
 		return nil, err
 	}
@@ -1308,6 +1326,21 @@ func (t *EnemyDuelPlayerStatus) UnmarshalBinaryReader(r io.Reader) error {
 	}
 
 	t.AvatarID, err = readPrefixedString(r, defaultMaxStrSize)
+	if err != nil {
+		return err
+	}
+
+	t.Secretary, err = readPrefixedString(r, defaultMaxStrSize)
+	if err != nil {
+		return err
+	}
+
+	t.SecretarySkinID, err = readPrefixedString(r, defaultMaxStrSize)
+	if err != nil {
+		return err
+	}
+
+	err = binary.Read(r, binary.BigEndian, &t.SecretarySkinSp)
 	if err != nil {
 		return err
 	}
