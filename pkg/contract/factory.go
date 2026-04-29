@@ -22,9 +22,27 @@ func NewS2CEnemyDuelTeamJoinMessage() *S2CEnemyDuelTeamJoinMessage {
 	return &S2CEnemyDuelTeamJoinMessage{}
 }
 
-func NewS2CEnemyDuelTeamStatusMessage(sceneID string, token string) *S2CEnemyDuelTeamStatusMessage {
+func NewS2CEnemyDuelTeamStatusMessage(sceneID string, token string, playerInfos []PlayerInfo) *S2CEnemyDuelTeamStatusMessage {
 	cfg := config.Get()
-	return &S2CEnemyDuelTeamStatusMessage{State: 3, Address: cfg.Server.Addr, SceneID: sceneID, Token: token}
+	
+	var players []*EnemyDuelPlayerStatus
+	for _, info := range playerInfos {
+		players = append(players, &EnemyDuelPlayerStatus{
+			PlayerID:   info.PlayerID,
+			NickName:   info.NickName,
+			AvatarType: "ICON",
+			AvatarID:   info.AvatarID,
+			State:      2, // Ready state so they look ready in lobby
+		})
+	}
+
+	return &S2CEnemyDuelTeamStatusMessage{
+		State:   3, 
+		Address: cfg.Server.Addr, 
+		SceneID: sceneID, 
+		Token:   token,
+		Players: players,
+	}
 }
 
 func NewS2CEnemyDuelEndMessage() *S2CEnemyDuelEndMessage {
