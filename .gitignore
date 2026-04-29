@@ -25,9 +25,3 @@
 go.work
 
 # End of https://www.toptal.com/developers/gitignore/api/go
-
-dump.cs
-server
-start.sh
-build.cmd
-start.cmd
