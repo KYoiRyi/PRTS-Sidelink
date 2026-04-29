@@ -800,9 +800,16 @@ func (gm *EnemyDuelGame) getAllPlayerResult() map[string]*contract.EnemyDuelBatt
 }
 
 func (gm *EnemyDuelGame) isAllPlayerReady() bool {
+	cfg := config.Get()
+
+	numPlayer := gm.getMaxNumPlayer()
+	if cfg.Server.SinglePlayer {
+		numPlayer = 1
+	}
+
 	sessions := gm.getSessions()
 
-	if len(sessions) == 0 {
+	if len(sessions) < numPlayer {
 		return false
 	}
 
@@ -888,13 +895,7 @@ func handleSessionMessageEnemyDuel(s *session.Session, g *EnemyDuelSessionGameSt
 
 		s.SendMessage(contract.NewS2CEnemyDuelTeamJoinMessage())
 
-		var players []contract.PlayerInfo
-		maxNumPlayer := game.getMaxNumPlayer()
-		for i := 0; i < maxNumPlayer; i++ {
-			players = append(players, game.playerInfos[i])
-		}
-
-		s.SendMessage(contract.NewS2CEnemyDuelTeamStatusMessage(msg.TeamID, msg.TeamToken, players))
+		s.SendMessage(contract.NewS2CEnemyDuelTeamStatusMessage(msg.TeamID, msg.TeamToken))
 
 		return
 	}
