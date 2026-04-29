@@ -25,6 +25,8 @@ type EnemyDuelGamePlayerStatus struct {
 	AllIn            uint8
 	ReportSide       uint8
 	IsReady          bool
+	NickName         string
+	AvatarID         string
 }
 
 func getExternalPlayerID(internalPlayerID int) string {
@@ -204,6 +206,7 @@ func (s *EnemyDuelGameWaitingState) Update() {
 
 	if s.EnemyDuel.isAllPlayerReady() || currentTime.After(s.ForceExitTime) {
 		s.EnemyDuel.setNoNewSession()
+		s.EnemyDuel.createBots()
 		s.EnemyDuel.SetState(&EnemyDuelGameEntryState{EnemyDuelGameStateBase: EnemyDuelGameStateBase{EnemyDuel: s.EnemyDuel}})
 		return
 	}
@@ -258,6 +261,8 @@ func (s *EnemyDuelGameBetState) OnEnter() {
 	for session := range sessions {
 		session.SendMessage(contract.NewS2CEnemyDuelClientStateMessage(2, s.EnemyDuel.round, s.ForceExitTime))
 	}
+
+	s.EnemyDuel.broadcastBotBets(sessions, s.ForceExitTime)
 }
 
 func (s *EnemyDuelGameBetState) OnExit() {
@@ -392,6 +397,8 @@ type EnemyDuelGame struct {
 	step                 uint32
 	reportSide           uint8
 	seed                 uint32
+	bots                 []*BotPlayer
+	playerInfos          [30]contract.PlayerInfo
 }
 
 func getRandNonZeroUint32() uint32 {
@@ -414,6 +421,16 @@ func NewEnemyDuelGame(gameID string, modeID string, stageID string) *EnemyDuelGa
 		cancel:   cancel,
 		sessions: make(map[*session.Session]*EnemyDuelSessionGameStatus),
 		seed:     getRandNonZeroUint32(),
+	}
+
+	for i := 0; i < 30; i++ {
+		name, avatar := generateBotInfo()
+		gm.playerInfos[i] = contract.PlayerInfo{
+			PlayerID:         getExternalPlayerID(i),
+			ExternalPlayerID: getExternalPlayerID(i),
+			NickName:         name,
+			AvatarID:         avatar,
+		}
 	}
 
 	gm.SetState(&EnemyDuelGameWaitingState{EnemyDuelGameStateBase: EnemyDuelGameStateBase{EnemyDuel: gm}})
@@ -550,6 +567,12 @@ func (gm *EnemyDuelGame) clearState() {
 		g.EnemyDuelGamePlayerStatus.AllIn = 0
 		g.EnemyDuelGamePlayerStatus.ReportSide = 0
 	}
+
+	for _, bot := range gm.bots {
+		bot.Status.Side = 0
+		bot.Status.AllIn = 0
+		bot.Status.ReportSide = 0
+	}
 }
 
 func (gm *EnemyDuelGame) getReportSide() uint8 {
@@ -561,6 +584,10 @@ func (gm *EnemyDuelGame) getReportSide() uint8 {
 		if !s.IsClosed() {
 			reportSideCntMap[g.EnemyDuelGamePlayerStatus.ReportSide]++
 		}
+	}
+
+	for _, bot := range gm.bots {
+		reportSideCntMap[bot.Status.ReportSide]++
 	}
 
 	reportSide := uint8(0)
@@ -633,24 +660,13 @@ func (gm *EnemyDuelGame) handleBetMessage(s *session.Session, g *EnemyDuelSessio
 	}
 }
 
-func (gm *EnemyDuelGame) getOtherPlayerIDSlice(internalPlayerID int) []string {
-	otherPlayerIDSlice := []string(nil)
-
-	maxNumPlayer := gm.getMaxNumPlayer()
-
-	for i := 0; i < maxNumPlayer; i++ {
-		if i == internalPlayerID {
-			continue
-		}
-
-		otherPlayerIDSlice = append(otherPlayerIDSlice, getExternalPlayerID(i))
-	}
-
-	return otherPlayerIDSlice
-}
-
 func (gm *EnemyDuelGame) initPlayerStatus(g *EnemyDuelSessionGameStatus, playerID string) {
 	g.EnemyDuelGamePlayerStatus.PlayerID = playerID
+
+	internalID := g.EnemyDuelGamePlayerStatus.internalPlayerID
+	gm.playerInfos[internalID].NickName = contract.GetNickName(false, getExternalPlayerID(internalID))
+	gm.playerInfos[internalID].AvatarID = "avatar_def_01"
+	gm.playerInfos[internalID].PlayerID = playerID
 
 	switch gm.ModeID {
 	case "multiOperationMatch":
@@ -688,51 +704,51 @@ func (gm *EnemyDuelGame) getRoundMoney() uint32 {
 	return 50000
 }
 
-func (gm *EnemyDuelGame) getPlayerResult(s *session.Session, g *EnemyDuelSessionGameStatus) *contract.EnemyDuelBattleStatusRoundLeaderBoard {
-	if g.EnemyDuelGamePlayerStatus.ShieldState == 1 {
-		g.EnemyDuelGamePlayerStatus.ShieldState = 0
+func (gm *EnemyDuelGame) calculatePlayerResult(status *EnemyDuelGamePlayerStatus) *contract.EnemyDuelBattleStatusRoundLeaderBoard {
+	if status.ShieldState == 1 {
+		status.ShieldState = 0
 	}
 
-	if (g.EnemyDuelGamePlayerStatus.Side & 0b11) == 0b11 {
-		g.EnemyDuelGamePlayerStatus.Side = 0
+	if (status.Side & 0b11) == 0b11 {
+		status.Side = 0
 	}
 
-	won := (g.EnemyDuelGamePlayerStatus.Money > 0) && ((gm.reportSide & g.EnemyDuelGamePlayerStatus.Side) != 0)
-	skip := g.EnemyDuelGamePlayerStatus.Side == 0
+	won := (status.Money > 0) && ((gm.reportSide & status.Side) != 0)
+	skip := status.Side == 0
 
 	leaderBoard := contract.EnemyDuelBattleStatusRoundLeaderBoard{
-		PlayerID: g.EnemyDuelGamePlayerStatus.getExternalPlayerID(),
-		OldMoney: g.EnemyDuelGamePlayerStatus.Money,
+		PlayerID: status.getExternalPlayerID(),
+		OldMoney: status.Money,
 		Result:   gm.reportSide,
-		Bet:      g.EnemyDuelGamePlayerStatus.Side,
+		Bet:      status.Side,
 	}
 
 	switch gm.ModeID {
 	case "multiOperationMatch":
 		roundMoney := gm.getRoundMoney()
 		if won {
-			g.EnemyDuelGamePlayerStatus.Streak++
+			status.Streak++
 
-			if g.EnemyDuelGamePlayerStatus.AllIn != 0 {
-				g.EnemyDuelGamePlayerStatus.Money += 2 * roundMoney
+			if status.AllIn != 0 {
+				status.Money += 2 * roundMoney
 			} else {
-				g.EnemyDuelGamePlayerStatus.Money += roundMoney
+				status.Money += roundMoney
 			}
 		} else {
-			g.EnemyDuelGamePlayerStatus.Streak = 0
+			status.Streak = 0
 
 			if !won && !skip {
-				if g.EnemyDuelGamePlayerStatus.AllIn != 0 {
-					g.EnemyDuelGamePlayerStatus.Money = 0
+				if status.AllIn != 0 {
+					status.Money = 0
 				} else {
-					g.EnemyDuelGamePlayerStatus.Money -= roundMoney
+					status.Money -= roundMoney
 				}
 			}
 		}
 
-		leaderBoard.NewMoney = g.EnemyDuelGamePlayerStatus.Money
-		leaderBoard.Streak = g.EnemyDuelGamePlayerStatus.Streak
-		if g.EnemyDuelGamePlayerStatus.Money > 0 {
+		leaderBoard.NewMoney = status.Money
+		leaderBoard.Streak = status.Streak
+		if status.Money > 0 {
 			leaderBoard.MaxRound = gm.round + 1
 		}
 
@@ -740,25 +756,29 @@ func (gm *EnemyDuelGame) getPlayerResult(s *session.Session, g *EnemyDuelSession
 	}
 
 	if gm.round < 5 {
-		if !won && g.EnemyDuelGamePlayerStatus.ShieldState == 2 {
+		if !won && status.ShieldState == 2 {
 			won = true
-			g.EnemyDuelGamePlayerStatus.ShieldState = 1
+			status.ShieldState = 1
 		}
 	} else {
-		g.EnemyDuelGamePlayerStatus.ShieldState = 0
+		status.ShieldState = 0
 	}
 
 	if !won {
-		g.EnemyDuelGamePlayerStatus.Money = 0
+		status.Money = 0
 	}
 
-	leaderBoard.NewMoney = g.EnemyDuelGamePlayerStatus.Money
-	leaderBoard.ShieldState = g.EnemyDuelGamePlayerStatus.ShieldState
-	if g.EnemyDuelGamePlayerStatus.Money > 0 {
+	leaderBoard.NewMoney = status.Money
+	leaderBoard.ShieldState = status.ShieldState
+	if status.Money > 0 {
 		leaderBoard.MaxRound = gm.round + 1
 	}
 
 	return &leaderBoard
+}
+
+func (gm *EnemyDuelGame) getPlayerResult(s *session.Session, g *EnemyDuelSessionGameStatus) *contract.EnemyDuelBattleStatusRoundLeaderBoard {
+	return gm.calculatePlayerResult(&g.EnemyDuelGamePlayerStatus)
 }
 
 func (gm *EnemyDuelGame) getAllPlayerResult() map[string]*contract.EnemyDuelBattleStatusRoundLeaderBoard {
@@ -771,13 +791,9 @@ func (gm *EnemyDuelGame) getAllPlayerResult() map[string]*contract.EnemyDuelBatt
 		allPlayerResult[playerResult.PlayerID] = playerResult
 	}
 
-	maxNumPlayer := gm.getMaxNumPlayer()
-
-	for i := 0; i < maxNumPlayer; i++ {
-		playerID := getExternalPlayerID(i)
-		if _, ok := allPlayerResult[playerID]; !ok {
-			allPlayerResult[playerID] = newEmptyEnemyDuelBattleStatusRoundLeaderBoard(playerID)
-		}
+	for _, bot := range gm.bots {
+		botResult := gm.calculatePlayerResult(&bot.Status)
+		allPlayerResult[botResult.PlayerID] = botResult
 	}
 
 	return allPlayerResult
@@ -910,15 +926,30 @@ func handleSessionMessageEnemyDuel(s *session.Session, g *EnemyDuelSessionGameSt
 
 		game.initPlayerStatus(g, msg.PlayerID)
 
-		otherPlayerIDSlice := game.getOtherPlayerIDSlice(g.EnemyDuelGamePlayerStatus.internalPlayerID)
+		var otherPlayers []contract.PlayerInfo
+		maxNumPlayer := game.getMaxNumPlayer()
+		for i := 0; i < maxNumPlayer; i++ {
+			if i == g.EnemyDuelGamePlayerStatus.internalPlayerID {
+				continue
+			}
+			otherPlayers = append(otherPlayers, game.playerInfos[i])
+		}
 
-		s.SendMessage(contract.NewS2CEnemyDuelJoinMessage(stageID, msg.PlayerID, g.EnemyDuelGamePlayerStatus.getExternalPlayerID(), otherPlayerIDSlice, game.seed))
+		selfInfo := contract.PlayerInfo{
+			PlayerID: msg.PlayerID,
+			NickName: contract.GetNickName(true, g.EnemyDuelGamePlayerStatus.getExternalPlayerID()),
+			AvatarID: "avatar_def_01",
+		}
+
+		s.SendMessage(contract.NewS2CEnemyDuelJoinMessage(stageID, selfInfo, otherPlayers, game.seed))
 
 		return
 	}
 
 	if msg, ok := c.(*contract.C2SEnemyDuelRoundSettleMessage); ok {
 		g.EnemyDuelGamePlayerStatus.ReportSide = msg.Side
+
+		g.EnemyDuel.settleAllBots(msg.Side)
 
 		return
 	}

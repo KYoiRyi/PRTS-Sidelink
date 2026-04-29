@@ -31,7 +31,14 @@ func NewS2CEnemyDuelEndMessage() *S2CEnemyDuelEndMessage {
 	return &S2CEnemyDuelEndMessage{}
 }
 
-func getNickName(isSelf bool, externalPlayerID string) string {
+type PlayerInfo struct {
+	PlayerID         string
+	ExternalPlayerID string
+	NickName         string
+	AvatarID         string
+}
+
+func GetNickName(isSelf bool, externalPlayerID string) string {
 	var pureNickName string
 	if isSelf {
 		pureNickName = "Bachelor"
@@ -42,15 +49,15 @@ func getNickName(isSelf bool, externalPlayerID string) string {
 	return fmt.Sprintf("%s#%04s", pureNickName, externalPlayerID)
 }
 
-func NewS2CEnemyDuelJoinMessage(stageID string, playerID string, externalPlayerID string, otherPlayerIDSlice []string, seed uint32) *S2CEnemyDuelJoinMessage {
+func NewS2CEnemyDuelJoinMessage(stageID string, self PlayerInfo, otherPlayers []PlayerInfo, seed uint32) *S2CEnemyDuelJoinMessage {
 	players := []*EnemyDuelServicePlayer{
 		{
-			PlayerID: playerID, AvatarID: "avatar_def_01", NickName: getNickName(true, externalPlayerID), AvatarType: "ICON",
+			PlayerID: self.PlayerID, AvatarID: self.AvatarID, NickName: self.NickName, AvatarType: "ICON",
 		},
 	}
 
-	for _, otherPlayerID := range otherPlayerIDSlice {
-		players = append(players, &EnemyDuelServicePlayer{PlayerID: otherPlayerID, AvatarID: "avatar_def_01", NickName: getNickName(false, otherPlayerID), AvatarType: "ICON"})
+	for _, otherPlayer := range otherPlayers {
+		players = append(players, &EnemyDuelServicePlayer{PlayerID: otherPlayer.PlayerID, AvatarID: otherPlayer.AvatarID, NickName: otherPlayer.NickName, AvatarType: "ICON"})
 	}
 
 	currentTime := time.Now()
