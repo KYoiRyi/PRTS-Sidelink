@@ -1,7 +1,7 @@
 server:
   addr: 127.0.0.1:8543
-  single_player: true
-  multi_player_wait_sec: 30
+  single_player: false
+  multi_player_wait_sec: 5
   debug: true
 icebreaker_server:
   addr: 127.0.0.1:8544
